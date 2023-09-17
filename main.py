@@ -6,16 +6,6 @@ import sys
 import os
 import datetime
 
-# Attempt to check for the token in the environment variable, if not found, abort
-token = os.getenv("GITHUB_API_TOKEN")
-if token is None:
-    print(
-        "getlicense: github token was not found. get the 'GITHUB_API_TOKEN' environment variable to the token.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-
 # Parser the command-line arguments
 arg_parser = ap.ArgumentParser()
 arg_parser.add_argument("license", help="Name of the license", type=str)
@@ -38,6 +28,15 @@ arg_parser.add_argument(
     nargs="?",
 )
 args = arg_parser.parse_args()
+
+# Attempt to check for the token in the environment variable, if not found, abort
+token = os.getenv("GITHUB_API_TOKEN")
+if token is None:
+    print(
+        "getlicense: github token was not found. get the 'GITHUB_API_TOKEN' environment variable to the token.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 # Check if the argument parser found a license given by the user
 if args.license:
