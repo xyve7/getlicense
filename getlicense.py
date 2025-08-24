@@ -3,86 +3,88 @@
 import requests as rq
 import argparse as ap
 import sys
-import os
-import datetime
+from rapidfuzz import fuzz
 
 # Parse command line arguments
 parser = ap.ArgumentParser()
 # Create the subparser 
 subparser = parser.add_subparsers(title="Subcommands", dest="command")
-
+# 'search' command parser
+search_parser = subparser.add_parser("search", aliases=["s"], help="Search for a license")
+search_parser.add_argument("query");
+search_parser.add_argument("-c", "--count", help="Number of entries to display", type=int, default=10, nargs="?");
 # 'add' command parser
-add_parser = subparser.add_parser("add", aliases=["a"], help="Adds a license")
-
+get_parser = subparser.add_parser("get", aliases=["g"], help="Gets a license")
 # Arguments for the 'add' command
-add_parser.add_argument("-l", "--license",  help="Key of the license", type=str)
-add_parser.add_argument("-p", "--path", help="Path to write the license to", type=str, nargs="?")
-add_parser.add_argument("-y", "--year", help="Year of the copyright", type=str, default=(str(datetime.date.today().year)), nargs="?")
-add_parser.add_argument("-n", "--name", help="Name of the copyright holder", type=str, default="John Doe", nargs="?")
-
+get_parser.add_argument("license", help="Key of the license", type=str)
+# 'list' command parser
 list_parser = subparser.add_parser("list", aliases=["l"], help="Lists available licenses")
 args = parser.parse_args();
 
-# Attempt to check for the token in the environment variable, if not found, abort
-token = os.getenv("GITHUB_API_TOKEN")
-if token is None:
-    print("getlicense: Github token was note found! Set the 'GITHUB_API_TOKEN' environment variable as your token!", file=sys.stderr)
+# Error function
+def fatal(message: str) -> None:
+    print(f"[getlicense] FATAL: {message}", file=sys.stderr)
     sys.exit(1)
 
-# Checks which subcommand was passed
-match args.command:
-    case "add" | "a":
-        # Check if the argument parser found a license given by the user
-        if args.license:
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
-            }
-            url = f"https://api.github.com/licenses/{args.license}"
-            resp = rq.get(url, headers=headers)
-            # Successful GET request
-            if resp.status_code == 200:
-                # If there is a file given, assign the output file to it, if not, write to stdout
-                lfile = sys.stdout
-                if args.path:
-                    lfile = open(args.path, "w")
+def main() -> None:
+    # Checks which subcommand was passed
+    match args.command:
+        case "search" | "s":
+            if not args.query:
+                fatal("No search query given")
+            
+            response = rq.get("https://spdx.org/licenses/licenses.json")
+            if response.status_code != 200:
+                fatal(f"Unable to retrieve license list, code: {response.status_code}")
+            
+            json = response.json()
+            licenses = json['licenses']
+            print("{: <40} {}".format("License ID", "License Name"))
 
-                # Write the license body data to the file, replacing the year and name correctly
-                lfile.write(
-                    resp.json()["body"]
-                    .replace("[year]", args.year)
-                    .replace("[fullname]", args.name)
-                )
-            else:
-                print(
-                    f"getlicense: unable to retrieve license {args.license}, status code: {resp.status_code}.",
-                    file=sys.stderr,
-                )
-        # No license was provided, report error and exit
-        else:
-            print("getlicense: no license name given.", file=sys.stderr)
+            results = []
+            for license in licenses:
+                name = license['name']
+                id = license['licenseId']
+                probability = max(fuzz.ratio(name, args.query), fuzz.ratio(id, args.query))
+                results.append((probability, license))
+            
+            results.sort(key=lambda x: x[0])
+            results.reverse()
 
-    case "list" | "l":
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
-            }
-            page = 1
-            url = f"https://api.github.com/licenses"
-            resp = rq.get(url, headers=headers, params={"page": page})
-            # Successful GET request
-            if resp.status_code == 200:
-                while len(resp.json()) > 0:
-                    for license in resp.json():
-                        print(license["key"] + ": " + license["name"])
-                    page += 1
-                    url = f"https://api.github.com/licenses"
-                    resp = rq.get(url, headers=headers, params={"page": page})
-            else:
-                print(
-                    f"getlicense: unable to retrieve license list, status code: {resp.status_code}.",
-                    file=sys.stderr,
-                )
-    case _:
-        parser.print_help()
+            for result in results[:args.count]:
+                print("{: <40} {}".format(result[1]['licenseId'], result[1]['name']))
+        
+        case "get" | "g":
+            if not args.license:
+                fatal("No license ID provided")
+
+            response = rq.get(f"https://spdx.org/licenses/{args.license}.json")
+            if response.status_code == 404:
+                fatal(f"{args.license} is NOT a valid license ID!")
+            
+            if response.status_code != 200:
+                fatal(f"Unable to retrieve license {args.license}, code: {response.status_code}")
+
+            json = response.json()
+            sys.stdout.write(json['licenseText'])
+        
+        case "list" | "l":
+            response = rq.get("https://spdx.org/licenses/licenses.json")
+            if response.status_code != 200:
+                fatal(f"Unable to retrieve license list! Code: {response.status_code}")
+            
+            json = response.json()
+            licenses = json['licenses']
+            print("{: <40} {}".format("License ID", "License Name"))
+
+            for license in licenses:
+                id = license['licenseId']
+                name = license['name']
+                print("{: <40} {}".format(id, name))
+        
+        case _:
+            parser.print_help()
+
+if __name__ == "__main__":
+    main()
 
